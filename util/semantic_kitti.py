@@ -48,6 +48,7 @@ class SemanticKITTI(torch.utils.data.Dataset):
         pc_range=None, 
         use_tta=None,
         vote_num=4,
+        sampling_rate=1
     ):
         super().__init__()
         self.num_classes = 19
@@ -71,6 +72,7 @@ class SemanticKITTI(torch.utils.data.Dataset):
         self.elastic_gran, self.elastic_mag = elastic_params[0], elastic_params[1]
         self.use_tta = use_tta
         self.vote_num = vote_num
+        self.sampling_rate = sampling_rate
 
         if split == 'train':
             splits = semkittiyaml['split']['train']
@@ -86,6 +88,7 @@ class SemanticKITTI(torch.utils.data.Dataset):
         self.files = []
         for i_folder in splits:
             self.files += sorted(glob.glob(os.path.join(data_path, "sequences", str(i_folder).zfill(2), 'velodyne', "*.bin")))
+        self.files = self.files[::self.sampling_rate]
 
         if isinstance(voxel_size, list):
             voxel_size = np.array(voxel_size).astype(np.float32)
