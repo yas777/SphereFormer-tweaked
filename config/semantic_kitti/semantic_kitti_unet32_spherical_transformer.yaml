@@ -1,6 +1,6 @@
 DATA:
   data_name: semantic_kitti
-  data_root: YOUR_DATA_ROOT/SemanticKITTI/dataset ## Fill in the data path 
+  data_root: /data/SemanticKITTI/dataset ## Fill in the data path 
   label_mapping: util/semantic-kitti.yaml
   classes: 19
   fea_dim: 6
