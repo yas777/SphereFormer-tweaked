@@ -477,14 +477,14 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler, g
         data_time.update(time.time() - end)
         torch.cuda.empty_cache()
         
-        coord, xyz, feat, target, offset = batch_data
-        offset_ = offset.clone()
-        offset_[1:] = offset_[1:] - offset_[:-1]
-        batch = torch.cat([torch.tensor([ii]*o) for ii,o in enumerate(offset_)], 0).long()
+        coord, xyz, feat, target, offset = batch_data # (N, 3), (N, 3), (N, 4), (N, 3), (2)
+        offset_ = offset.clone() # (2)
+        offset_[1:] = offset_[1:] - offset_[:-1] # (2) -> [i1(<N), N] 
+        batch = torch.cat([torch.tensor([ii]*o) for ii,o in enumerate(offset_)], 0).long() # (N)
 
-        coord = torch.cat([batch.unsqueeze(-1), coord], -1)
-        coord[:, 1:] += (torch.rand(3) * 2).type_as(coord)
-        spatial_shape = np.clip((coord.max(0)[0][1:] + 1).numpy(), 128, None)
+        coord = torch.cat([batch.unsqueeze(-1), coord], -1) # (N, 4)
+        coord[:, 1:] += (torch.rand(3) * 2).type_as(coord) 
+        spatial_shape = np.clip((coord.max(0)[0][1:] + 1).numpy(), 128, None) # (3) -> Maximum co-ordinate in all 3 directions capped to 128 
     
         coord, xyz, feat, target, offset = coord.cuda(non_blocking=True), xyz.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
         batch = batch.cuda(non_blocking=True)
@@ -507,6 +507,10 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler, g
                 loss = criterion(output, target)
             else:
                 raise ValueError("such loss {} not implemented".format(loss_name))
+            
+        if main_process():
+            logger.info("loop {}".format(i))
+        exit()
 
         optimizer.zero_grad()
         
