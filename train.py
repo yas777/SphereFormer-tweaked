@@ -249,6 +249,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             pc_range=args.get("pc_range", None), 
             use_tta=args.use_tta,
             vote_num=args.vote_num,
+            sampling_rate=args.train_sampling_rate
         )
 
     elif args.data_name == 'waymo':
@@ -321,6 +322,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             pc_range=args.get("pc_range", None), 
             use_tta=args.use_tta,
             vote_num=args.vote_num,
+            sampling_rate=args.val_sampling_rate
         )
     elif args.data_name == 'waymo':
         val_data = Waymo(data_path=args.data_root, 
