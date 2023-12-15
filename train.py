@@ -509,10 +509,6 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler, g
                 loss = criterion(output, target)
             else:
                 raise ValueError("such loss {} not implemented".format(loss_name))
-            
-        if main_process():
-            logger.info("loop {}".format(i))
-        exit()
 
         optimizer.zero_grad()
         
