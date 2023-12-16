@@ -5,7 +5,7 @@ import numbers
 from timm.models.layers import DropPath, trunc_normal_
 from . import SparseTrTensor
 from .functional import attention_step1, attention_step2, dot_prod_with_idx, dot_prod_with_idx_all, attention_step2_with_rel_pos_value
-from .utils import to_3d_numpy, scatter_softmax_csr, get_indices_params
+from .utils import to_3d_numpy, scatter_softmax_csr, get_indices_params, point_partition
 from .position_embedding import PositionEmbeddingCoordsSine
 
 def sparse_self_attention(query, 
@@ -30,6 +30,9 @@ def sparse_self_attention(query,
     relative_pos_key_table=None, 
     relative_pos_value_table=None,
     split_func=None,
+    radial_partition=None,
+    delta=None,
+    debug=False
 ):
     
     query = query[sort_idx]
@@ -40,7 +43,50 @@ def sparse_self_attention(query,
     if pe_type == 'contextual' and rel_query and rel_key:
         window_size = torch.from_numpy(window_size).float().cuda()
         shift_size = 1/2 * window_size if shift_win else 0.0
-        xyz_quant = (xyz_ctg - xyz_ctg.min(0)[0] + shift_size) % window_size
+        if debug:
+            print(f"xyz ctg {xyz_ctg}")
+            print(f"xyz_ctg min {xyz_ctg.min(0)}")
+        if radial_partition is None:
+            xyz_quant = (xyz_ctg - xyz_ctg.min(0)[0] + shift_size) % window_size
+        else:
+            xyz_ctg1, xyz_ctg2, xyz_ctg3, window_size1, window_size2, window_size3 = point_partition(xyz_ctg, window_size, radial_partition, delta)
+            xy_ctg1, xy_ctg2, xy_ctg3, xy_window_size1, xy_window_size2, xy_window_size3 = xyz_ctg1[:, :-1], xyz_ctg2[:, :-1], xyz_ctg3[:, :-1], window_size1[:-1], window_size2[:-1], window_size3[:-1]
+            xy_quant1, xy_quant2, xy_quant3 = torch.empty(0,2).type_as(xyz).to(xyz.device), \
+                                              torch.empty(0,2).type_as(xyz).to(xyz.device), \
+                                              torch.empty(0,2).type_as(xyz).to(xyz.device)
+            z_quant1, z_quant2, z_quant3 = torch.empty(0).type_as(xyz).to(xyz.device), \
+                                           torch.empty(0).type_as(xyz).to(xyz.device), \
+                                           torch.empty(0).type_as(xyz).to(xyz.device)
+            if xy_ctg1.numel() != 0:
+                xy_quant1 = (xy_ctg1 - xy_ctg1.min(0)[0] + shift_size) % xy_window_size1
+            if xy_ctg2.numel() != 0:
+                xy_quant2 = (xy_ctg2 - xy_ctg2.min(0)[0] + shift_size) % xy_window_size2
+            if xy_ctg3.numel() != 0:
+                xy_quant3 = (xy_ctg3 - xy_ctg3.min(0)[0] + shift_size) % xy_window_size3
+            
+            z_ctg1, z_ctg2, z_ctg3, z_window_size = xyz_ctg1[:, 2], xyz_ctg2[:, 2], xyz_ctg3[:, 2], window_size[2]
+            if z_ctg1.numel() != 0:
+                z_quant1 = (z_ctg1 - z_ctg1.min(0)[0] + shift_size) % z_window_size
+            if z_ctg2.numel() != 0:
+                z_quant2 = (z_ctg2 - z_ctg2.min(0)[0] + shift_size) % z_window_size
+            if z_ctg3.numel() != 0:
+                z_quant3 = (z_ctg3 - z_ctg3.min(0)[0] + shift_size) % z_window_size
+
+            if debug:
+                print(f"xy ctg 1 {xy_ctg1}, xy ctg 2 {xy_ctg2}, xy ctg 3 {xy_ctg3}")
+                print(f"xyz_ctg min 1 {xyz_ctg1.min(0)},xyz_ctg min 2 {xyz_ctg2.min(0)}, xyz_ctg3 min {xyz_ctg3.min(0)}")
+                print(f"xy window size 1 {xy_window_size1}, xy window size 2 {xy_window_size2}, xy window size 3 {xy_window_size3}")
+                print(f"xy quant 1 {xy_quant1}, xy quant 2 {xy_quant2}, xy quant 3 {xy_quant3}")
+                print(f"z quant 1 {z_quant1}, z quant 2 {z_quant2}, z quant 3 {z_quant3}")
+            xyz_quant1, xyz_quant2, xyz_quant3 = torch.cat((xy_quant1, z_quant1.unsqueeze(-1)), dim=1), \
+                                                 torch.cat((xy_quant2, z_quant2.unsqueeze(-1)), dim=1), \
+                                                 torch.cat((xy_quant3, z_quant3.unsqueeze(-1)), dim=1)
+        
+            xyz_quant = torch.cat((xyz_quant1, xyz_quant2, xyz_quant3), dim=0)
+                                                
+        if debug:
+            print(f"xyz quant {xyz_quant}")
+        
         xyz_quant = torch.div(xyz_quant, torch.from_numpy(quant_size).float().cuda(), rounding_mode='floor') #[N, 3]
         relative_position = xyz_quant[index_0.long()] - xyz_quant[index_1.long()] #[M, 3]
         relative_position_index = relative_position + quant_grid_length - 1

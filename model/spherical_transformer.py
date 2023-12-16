@@ -87,6 +87,8 @@ class SparseMultiheadSASphereConcat(nn.Module):
 
         self.window_size = to_3d_numpy(window_size)
         self.window_size_sphere = to_3d_numpy(window_size_sphere)
+        self.radial_partition = kwargs['radial_partition']
+        self.window_delta = kwargs['window_delta']
 
         if pe_type == 'contextual':
             self.rel_query, self.rel_key, self.rel_value = kwargs['rel_query'], kwargs['rel_key'], kwargs['rel_value']
@@ -152,14 +154,14 @@ class SparseMultiheadSASphereConcat(nn.Module):
         self.proj_drop = nn.Dropout(dropout, inplace=True)
 
     def forward(self, sptr_tensor: SparseTrTensor):
-        query, key, value = sptr_tensor.query_feats, sptr_tensor.key_feats, sptr_tensor.value_feats
+        query, key, value = sptr_tensor.query_feats, sptr_tensor.key_feats, sptr_tensor.value_feats # (N, nPlanes[0])
         assert key is None and value is None
-        xyz = sptr_tensor.query_indices[:, 1:]
-        batch = sptr_tensor.query_indices[:, 0]
+        xyz = sptr_tensor.query_indices[:, 1:] #(N, 3)
+        batch = sptr_tensor.query_indices[:, 0] #(N)
 
         assert xyz.shape[1] == 3
 
-        N, C = query.shape
+        N, C = query.shape 
         
         qkv = self.qkv(query).reshape(N, 3, self.num_heads, C // self.num_heads).permute(1, 0, 2, 3).contiguous()
         query, key, value = qkv[0], qkv[1], qkv[2] #[N, num_heads, C//num_heads]
@@ -167,6 +169,7 @@ class SparseMultiheadSASphereConcat(nn.Module):
 
         xyz_sphere = cart2sphere(xyz)
         index_params = sptr_tensor.find_indice_params(self.indice_key)
+        # print(f"index params {index_params}")
         if index_params is None:
             index_0, index_0_offsets, n_max, index_1, index_1_offsets, sort_idx = get_indices_params(
                 xyz, 
@@ -174,12 +177,21 @@ class SparseMultiheadSASphereConcat(nn.Module):
                 self.window_size, 
                 self.shift_win
             )
+            # print(f"xyz shape {xyz_sphere}")
+            # print(f"window {self.window_size_sphere}")
             index_0_sphere, index_0_offsets_sphere, n_max_sphere, index_1_sphere, index_1_offsets_sphere, sort_idx_sphere = get_indices_params(
                 xyz_sphere, 
                 batch, 
                 self.window_size_sphere, 
-                self.shift_win
+                self.shift_win,
+                radial_partition=self.radial_partition,
+                delta=self.window_delta,
+                debug=False
             )
+            # print(f"index 0 shape {index_0_sphere}")
+            # print(f"index 0 offsets shape {index_0_offsets}")
+            # print(f"index 1 shape {index_1_sphere}")
+            # print(f"index 1 offsets shape {index_1_offsets}")
             sptr_tensor.indice_dict[self.indice_key] = (
                 index_0, 
                 index_0_offsets, 
@@ -254,8 +266,12 @@ class SparseMultiheadSASphereConcat(nn.Module):
                 "relative_pos_key_table": self.relative_pos_key_table_sphere.float(),
                 "relative_pos_value_table": self.relative_pos_value_table_sphere.float(),
                 "split_func": partial(exponential_split, a=self.a),
+                "radial_partition": self.radial_partition,
+                "delta": self.window_delta,
+                "debug":False
             })
         out2 = sparse_self_attention(**kwargs)
+        # exit()
 
         x = torch.cat([out1, out2], 1).view(N, C)
 
@@ -287,6 +303,8 @@ class SphereFormer(nn.Module):
         act_layer=nn.GELU, 
         norm_layer=nn.LayerNorm, 
         a=0.05*0.25,
+        radial_partition=None,
+        window_delta=None
     ):
         super().__init__()
         self.window_size = window_size
@@ -307,6 +325,8 @@ class SphereFormer(nn.Module):
             qkv_bias=qkv_bias, 
             qk_scale=qk_scale,
             a=a,
+            radial_partition=radial_partition,
+            window_delta=window_delta
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()

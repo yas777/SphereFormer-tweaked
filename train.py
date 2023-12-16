@@ -127,6 +127,8 @@ def main_worker(gpu, ngpus_per_node, argss):
             grad_checkpoint_layers=args.grad_checkpoint_layers, 
             sphere_layers=args.sphere_layers,
             a=args.a,
+            radial_partition=args.radial_partition,
+            window_delta=args.window_delta
         )
     else:
         raise Exception('architecture {} not supported yet'.format(args.arch))
@@ -484,6 +486,10 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler, g
         offset_[1:] = offset_[1:] - offset_[:-1] # (2) -> [i1(<N), N] 
         batch = torch.cat([torch.tensor([ii]*o) for ii,o in enumerate(offset_)], 0).long() # (N)
 
+        # if main_process():
+        #     logger.info('batch {}, offsets {}'.format(batch, offset_))
+        # exit()
+
         coord = torch.cat([batch.unsqueeze(-1), coord], -1) # (N, 4)
         coord[:, 1:] += (torch.rand(3) * 2).type_as(coord) 
         spatial_shape = np.clip((coord.max(0)[0][1:] + 1).numpy(), 128, None) # (3) -> Maximum co-ordinate in all 3 directions capped to 128 
@@ -511,7 +517,6 @@ def train(train_loader, model, criterion, optimizer, epoch, scaler, scheduler, g
                 raise ValueError("such loss {} not implemented".format(loss_name))
 
         optimizer.zero_grad()
-        
         if use_amp:
             scaler.scale(loss).backward()
             scaler.step(optimizer)

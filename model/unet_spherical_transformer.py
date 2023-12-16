@@ -78,6 +78,8 @@ class UBlock(nn.Module):
         grad_checkpoint_layers=[], 
         sphere_layers=[1,2,3,4,5],
         a=0.05*0.25,
+        radial_partition=None,
+        window_delta=None
     ):
 
         super().__init__()
@@ -108,6 +110,8 @@ class UBlock(nn.Module):
                 rel_value=rel_value, 
                 drop_path=drop_path[0],
                 a=a,
+                radial_partition=radial_partition,
+                window_delta=window_delta
             )
 
         if len(nPlanes) > 1:
@@ -173,7 +177,7 @@ class UBlock(nn.Module):
 
         assert (inp.indices[:, 0] == batch).all()
         
-        output = self.blocks(inp)
+        output = self.blocks(inp) # (N, nPLanes[0])
 
         # transformer
         if self.indice_key_id in self.sphere_layers:
@@ -222,6 +226,8 @@ class Semantic(nn.Module):
         grad_checkpoint_layers=[], 
         sphere_layers=[1,2,3,4,5],
         a=0.05*0.25,
+        radial_partition=None,
+        window_delta=None
     ):
         super().__init__()
 
@@ -256,6 +262,8 @@ class Semantic(nn.Module):
             grad_checkpoint_layers=grad_checkpoint_layers, 
             sphere_layers=sphere_layers,
             a=a,
+            radial_partition=radial_partition,
+            window_delta=window_delta
         )
 
         self.output_layer = spconv.SparseSequential(
@@ -281,7 +289,7 @@ class Semantic(nn.Module):
         :param input_map: (N), int, cuda
         '''
 
-        output = self.input_conv(input)
+        output = self.input_conv(input) # (N, m)
         output = self.unet(output, xyz, batch)
         output = self.output_layer(output)
 

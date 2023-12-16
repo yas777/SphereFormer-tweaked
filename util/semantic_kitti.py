@@ -88,7 +88,7 @@ class SemanticKITTI(torch.utils.data.Dataset):
         self.files = []
         for i_folder in splits:
             self.files += sorted(glob.glob(os.path.join(data_path, "sequences", str(i_folder).zfill(2), 'velodyne', "*.bin")))
-        self.files = self.files[::self.sampling_rate]
+        # self.files = self.files[::self.sampling_rate]
 
         if isinstance(voxel_size, list):
             voxel_size = np.array(voxel_size).astype(np.float32)
@@ -118,6 +118,8 @@ class SemanticKITTI(torch.utils.data.Dataset):
         annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
         annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
 
+        raw_data = raw_data[::self.sampling_rate, :]
+        annotated_data = annotated_data[::self.sampling_rate, :]
         points = raw_data[:, :4]
 
         if self.split != 'test':

@@ -155,6 +155,7 @@ class PrecomputeAll(Function):
         sq_offsets = torch.cat([counts.new_zeros(1), (counts**2).cumsum(-1)], 0)
         M = sq_offsets[-1].item()
 
+        # print(f"count square sums {M}")
         index_0_offsets = torch.cuda.IntTensor(N).zero_()
         index_1_offsets = torch.cuda.IntTensor(N).zero_()
         index_0 = torch.cuda.IntTensor(M).zero_()
