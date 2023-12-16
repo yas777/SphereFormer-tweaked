@@ -99,4 +99,4 @@ data/val
 *.png
 debug/
 spconv/
-
+data/SemanticKITTI/*
