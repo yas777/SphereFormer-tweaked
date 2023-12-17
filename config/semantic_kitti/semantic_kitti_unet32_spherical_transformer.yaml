@@ -32,7 +32,7 @@ TRAIN:
                           5.1102,  2.5492,  5.8585,  7.3929]
   xyz_norm: False
   pc_range: [[-51.2, -51.2, -4], [51.2, 51.2, 2.4]]
-  window_size_sphere: [1.5, 1.5, 80]
+  window_size_sphere: [1, 1, 80]
   window_size_scale: [2.0, 1.5]
   sphere_layers: [1,2,3,4,5]
   grad_checkpoint_layers: []
@@ -64,9 +64,9 @@ TRAIN:
   manual_seed: 123
   print_freq: 10
   save_freq: 1
-  save_path: runs/semantic_kitti_unet32_spherical_transformer/rtx2_bs32_ws1.5/
+  save_path: runs/semantic_kitti_unet32_spherical_transformer/rtx2_bs32_ws1/
   weight:  # path to initial weight (default: none)
-  resume:  runs/semantic_kitti_unet32_spherical_transformer/rtx2_bs32_ws1.5/model_last.pth
+  resume:  runs/semantic_kitti_unet32_spherical_transformer/rtx2_bs32_ws1/model/model_last.pth
   evaluate: True  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
   eval_freq: 1
   val: False
