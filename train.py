@@ -401,7 +401,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             validate_tta(val_loader, model, criterion)
         else:
             # validate(val_loader, model, criterion)
-            validate_distance(val_loader, model, criterion)
+            validate_distance1(val_loader, model, criterion)
         exit()
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -780,6 +780,128 @@ def validate_tta(val_loader, model, criterion):
     
     return loss_meter.avg, mIoU, mAcc, allAcc
 
+def validate_distance1(val_loader, model, criterion):
+    if main_process():
+        logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    loss_meter = AverageMeter()
+    intersection_meter = AverageMeter()
+    union_meter = AverageMeter()
+    target_meter = AverageMeter()
+
+    # For validation on points with different distance
+    intersection_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
+    union_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
+    target_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
+
+    torch.cuda.empty_cache()
+
+    loss_name = args.loss_name
+
+    model.eval()
+    end = time.time()
+    for i, batch_data in enumerate(val_loader):
+
+        data_time.update(time.time() - end)
+    
+        (coord, xyz, feat, target, offset, inds_reverse) = batch_data
+        inds_reverse = inds_reverse.cuda(non_blocking=True)
+
+        offset_ = offset.clone()
+        offset_[1:] = offset_[1:] - offset_[:-1]
+        batch = torch.cat([torch.tensor([ii]*o) for ii,o in enumerate(offset_)], 0).long()
+
+        coord = torch.cat([batch.unsqueeze(-1), coord], -1)
+        spatial_shape = np.clip((coord.max(0)[0][1:] + 1).numpy(), 128, None)
+    
+        coord, xyz, feat, target, offset = coord.cuda(non_blocking=True), xyz.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
+        batch = batch.cuda(non_blocking=True)
+
+        sinput = spconv.SparseConvTensor(feat, coord.int(), spatial_shape, args.batch_size_val)
+
+        assert batch.shape[0] == feat.shape[0]
+        
+        with torch.no_grad():
+            output = model(sinput, xyz, batch)
+            output = output[inds_reverse, :]
+        
+            if loss_name == 'focal_loss':
+                loss = focal_loss(output, target, criterion.weight, args.ignore_label, args.loss_gamma)
+            elif loss_name == 'ce_loss':
+                loss = criterion(output, target)
+            else:
+                raise ValueError("such loss {} not implemented".format(loss_name))
+
+        output = output.max(1)[1]
+        n = coord.size(0)
+        if args.multiprocessing_distributed:
+            loss *= n
+            count = target.new_tensor([n], dtype=torch.long)
+            dist.all_reduce(loss), dist.all_reduce(count)
+            n = count.item()
+            loss /= n
+
+        r = torch.sqrt(feat[:, 0] ** 2 + feat[:, 1] ** 2 + feat[:, 2] ** 2)
+        r = r[inds_reverse]
+        
+        # For validation on points with different distance
+        masks = [r <= 20, (r > 20) & (r <= 50), r > 50]
+
+        for ii, mask in enumerate(masks):
+            intersection, union, tgt = intersectionAndUnionGPU(output[mask], target[mask], args.classes, args.ignore_label)
+            if args.multiprocessing_distributed:
+                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(tgt)
+            intersection, union, tgt = intersection.cpu().numpy(), union.cpu().numpy(), tgt.cpu().numpy()
+            intersection_meter_list[ii].update(intersection), union_meter_list[ii].update(union), target_meter_list[ii].update(tgt)
+
+        intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
+        if args.multiprocessing_distributed:
+            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
+        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
+        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+
+        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
+        loss_meter.update(loss.item(), n)
+        batch_time.update(time.time() - end)
+        end = time.time()
+        if (i + 1) % args.print_freq == 0 and main_process():
+            logger.info('Test: [{}/{}] '
+                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                        'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                        'Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f}) '
+                        'Accuracy {accuracy:.4f}.'.format(i + 1, len(val_loader),
+                                                          data_time=data_time,
+                                                          batch_time=batch_time,
+                                                          loss_meter=loss_meter,
+                                                          accuracy=accuracy))
+
+    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
+    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
+    mIoU = np.mean(iou_class)
+    mAcc = np.mean(accuracy_class)
+    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
+
+    iou_class_list = [intersection_meter_list[i].sum / (union_meter_list[i].sum + 1e-10) for i in range(3)]
+    accuracy_class_list = [intersection_meter_list[i].sum / (target_meter_list[i].sum + 1e-10) for i in range(3)]
+    mIoU_list = [np.mean(iou_class_list[i]) for i in range(3)]
+    mAcc_list = [np.mean(accuracy_class_list[i]) for i in range(3)]
+    allAcc_list = [sum(intersection_meter_list[i].sum) / (sum(target_meter_list[i].sum) + 1e-10) for i in range(3)]
+
+    if main_process():
+
+        metrics = ['close', 'medium', 'distant']
+        for ii in range(3):
+            logger.info('Val result_{}: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(metrics[ii], mIoU_list[ii], mAcc_list[ii], allAcc_list[ii]))
+            for i in range(args.classes):
+                logger.info('Class_{} Result: iou/accuracy {:.4f}/{:.4f}.'.format(i, iou_class_list[ii][i], accuracy_class_list[ii][i]))
+
+        logger.info('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+        for i in range(args.classes):
+            logger.info('Class_{} Result: iou/accuracy {:.4f}/{:.4f}.'.format(i, iou_class[i], accuracy_class[i]))
+        logger.info('<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<')
+    
+    return loss_meter.avg, mIoU, mAcc, allAcc
 
 def validate_distance(val_loader, model, criterion):
     if main_process():
