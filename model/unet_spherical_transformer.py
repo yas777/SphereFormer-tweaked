@@ -142,6 +142,7 @@ class UBlock(nn.Module):
                 quant_size_sphere[1]*window_size_scale_sphere, 
                 quant_size_sphere[2]
             ])
+            window_delta = window_delta * window_size_scale_sphere
             self.u = UBlock(nPlanes[1:], 
                 norm_fn, 
                 block_reps, 
@@ -158,7 +159,9 @@ class UBlock(nn.Module):
                 indice_key_id=indice_key_id+1, 
                 grad_checkpoint_layers=grad_checkpoint_layers, 
                 sphere_layers=sphere_layers,
-                a=a
+                a=a,
+                radial_partition=radial_partition,
+                window_delta=window_delta
             )
 
             self.deconv = spconv.SparseSequential(

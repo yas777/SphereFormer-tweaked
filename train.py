@@ -424,7 +424,7 @@ def main_worker(gpu, ngpus_per_node, argss):
 
         is_best = False
         if args.evaluate and (epoch_log % args.eval_freq == 0):
-            loss_val, mIoU_val, mAcc_val, allAcc_val = validate(val_loader, model, criterion)
+            loss_val, mIoU_val, mAcc_val, allAcc_val = validate_distance(val_loader, model, criterion)
 
             if main_process():
                 writer.add_scalar('loss_val', loss_val, epoch_log)
@@ -438,9 +438,11 @@ def main_worker(gpu, ngpus_per_node, argss):
             if not os.path.exists(args.save_path + "/model/"):
                 os.makedirs(args.save_path + "/model/")
             filename = args.save_path + '/model/model_last.pth'
+            filename1 = args.save_path + '/model/model_' + str(epoch) + '.pth'
             logger.info('Saving checkpoint to: ' + filename)
             torch.save({'epoch': epoch_log, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict(),
                         'scheduler': scheduler.state_dict(), 'best_iou': best_iou, 'is_best': is_best}, filename)
+            shutil.copyfile(filename, filename1)
             if is_best:
                 shutil.copyfile(filename, args.save_path + '/model/model_best.pth')
 
@@ -790,9 +792,9 @@ def validate_distance(val_loader, model, criterion):
     target_meter = AverageMeter()
 
     # For validation on points with different distance
-    intersection_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
-    union_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
-    target_meter_list = [AverageMeter(), AverageMeter(), AverageMeter()]
+    intersection_meter_list = [AverageMeter() for _ in range(8)]
+    union_meter_list = [AverageMeter() for _ in range(8)]
+    target_meter_list = [AverageMeter() for _ in range(8)]
 
     torch.cuda.empty_cache()
 
@@ -845,7 +847,7 @@ def validate_distance(val_loader, model, criterion):
         r = r[inds_reverse]
         
         # For validation on points with different distance
-        masks = [r <= 20, (r > 20) & (r <= 50), r > 50]
+        masks = [r <= 10, (r > 10) & (r <= 20), (r > 20) & (r <= 30), (r > 30) & (r <= 40), (r > 40) & (r <= 50), (r > 50) & (r <= 60), (r > 60) & (r <= 70), r > 70]
 
         for ii, mask in enumerate(masks):
             intersection, union, tgt = intersectionAndUnionGPU(output[mask], target[mask], args.classes, args.ignore_label)
@@ -881,16 +883,16 @@ def validate_distance(val_loader, model, criterion):
     mAcc = np.mean(accuracy_class)
     allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
 
-    iou_class_list = [intersection_meter_list[i].sum / (union_meter_list[i].sum + 1e-10) for i in range(3)]
-    accuracy_class_list = [intersection_meter_list[i].sum / (target_meter_list[i].sum + 1e-10) for i in range(3)]
-    mIoU_list = [np.mean(iou_class_list[i]) for i in range(3)]
-    mAcc_list = [np.mean(accuracy_class_list[i]) for i in range(3)]
-    allAcc_list = [sum(intersection_meter_list[i].sum) / (sum(target_meter_list[i].sum) + 1e-10) for i in range(3)]
+    iou_class_list = [intersection_meter_list[i].sum / (union_meter_list[i].sum + 1e-10) for i in range(len(masks))]
+    accuracy_class_list = [intersection_meter_list[i].sum / (target_meter_list[i].sum + 1e-10) for i in range(len(masks))]
+    mIoU_list = [np.mean(iou_class_list[i]) for i in range(len(masks))]
+    mAcc_list = [np.mean(accuracy_class_list[i]) for i in range(len(masks))]
+    allAcc_list = [sum(intersection_meter_list[i].sum) / (sum(target_meter_list[i].sum) + 1e-10) for i in range(len(masks))]
 
     if main_process():
 
-        metrics = ['close', 'medium', 'distant']
-        for ii in range(3):
+        metrics = ["r <= 10", "10 < r <= 20", "20 < r <= 30", "30 < r <= 40", "40 < r <= 50", "50 < r <= 60", "60 < r <= 70", "r > 70"]
+        for ii in range(len(masks)):
             logger.info('Val result_{}: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(metrics[ii], mIoU_list[ii], mAcc_list[ii], allAcc_list[ii]))
             for i in range(args.classes):
                 logger.info('Class_{} Result: iou/accuracy {:.4f}/{:.4f}.'.format(i, iou_class_list[ii][i], accuracy_class_list[ii][i]))
